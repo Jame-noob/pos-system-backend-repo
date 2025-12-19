@@ -1,0 +1,4 @@
+name,slug,sku,barcode,category_id,description,price,cost_price,stock_quantity,low_stock_threshold,image_emoji,image,is_active
+"Burger","burger","SKU001","1234567890",1,"Delicious burger",8.99,5.00,100,10,"🍔","",1
+"Pizza","pizza","SKU002","0987654321",1,"Tasty pizza",12.99,7.00,50,5,"🍕","",1
+"Coffee","coffee","SKU003","1122334455",2,"Hot coffee",3.99,1.50,200,20,"☕","",1
