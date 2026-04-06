@@ -11,42 +11,24 @@ const getSettings = async (req, res) => {
     try {
         const merchantId = req.user.merchant_id;
 
-        const [[settings], [merchants], [payments]] = await Promise.all([
-            promisePool.query('SELECT * FROM receipt_settings WHERE merchant_id = ?', [merchantId]),
-            promisePool.query(
-                'SELECT business_name, address, phone, email, website, tax_id FROM merchants WHERE merchant_id = ?',
-                [merchantId]
-            ),
-            promisePool.query(
-                'SELECT mobile_qr_url FROM payment_settings WHERE merchant_id = ?',
-                [merchantId]
-            ),
-        ]);
+        const [settings] = await promisePool.query(
+            'SELECT * FROM receipt_settings WHERE merchant_id = ?',
+            [merchantId]
+        );
 
-        if (settings.length === 0) {
-            await promisePool.query(
-                `INSERT INTO receipt_settings (merchant_id, created_by, business_name)
-                 VALUES (?, ?, '')
-                 ON DUPLICATE KEY UPDATE updated_at = CURRENT_TIMESTAMP`,
-                [merchantId, req.user.id]
-            );
-            const [newSettings] = await promisePool.query(
-                'SELECT * FROM receipt_settings WHERE merchant_id = ?',
-                [merchantId]
-            );
-            return sendSuccess(res, formatSettings(newSettings[0], merchants[0], payments[0]), 'Receipt settings retrieved successfully');
-        }
+        const row = settings[0] || null;
 
         // Restore soft-deleted record if needed
-        if (settings[0].deleted_at) {
+        if (row && row.deleted_at) {
             await promisePool.query(
                 'UPDATE receipt_settings SET deleted_at = NULL WHERE merchant_id = ?',
                 [merchantId]
             );
-            settings[0].deleted_at = null;
+            row.deleted_at = null;
         }
 
-        sendSuccess(res, formatSettings(settings[0], merchants[0], payments[0]), 'Receipt settings retrieved successfully');
+        // Return defaults if no record yet — record is created on first save
+        sendSuccess(res, formatSettings(row || {}), 'Receipt settings retrieved successfully');
 
     } catch (error) {
         log.error('Get receipt settings error:', error);
@@ -105,34 +87,12 @@ const updateSettings = async (req, res) => {
             [merchantId]
         );
 
-        if (existing.length === 0) {
-            await promisePool.query(
-                `INSERT INTO receipt_settings (merchant_id, created_by, business_name)
-                 VALUES (?, ?, '')
-                 ON DUPLICATE KEY UPDATE updated_at = CURRENT_TIMESTAMP`,
-                [merchantId, req.user.id]
-            );
-        } else if (existing[0].deleted_at) {
-            await promisePool.query(
-                'UPDATE receipt_settings SET deleted_at = NULL WHERE merchant_id = ?',
-                [merchantId]
-            );
-        }
-
-        // Sync business info back to merchants table
+        // Upsert receipt_settings record (create if not exists, restore if soft-deleted)
         await promisePool.query(
-            `INSERT INTO merchants (merchant_id, merchant_name, merchant_name_la, created_by, created_date,
-                business_name, address, phone, email, website, tax_id)
-             VALUES (?, '', '', ?, NOW(), ?, ?, ?, ?, ?, ?)
-             ON DUPLICATE KEY UPDATE
-                business_name = VALUES(business_name),
-                address       = VALUES(address),
-                phone         = VALUES(phone),
-                email         = VALUES(email),
-                website       = VALUES(website),
-                tax_id        = VALUES(tax_id),
-                updated_at    = CURRENT_TIMESTAMP`,
-            [merchantId, String(merchantId), businessName || '', address || '', phone || '', email || '', website || '', taxId || '']
+            `INSERT INTO receipt_settings (merchant_id, created_by, business_name)
+             VALUES (?, ?, ?)
+             ON DUPLICATE KEY UPDATE deleted_at = NULL, updated_at = CURRENT_TIMESTAMP`,
+            [merchantId, req.user.id, businessName || '']
         );
 
         await promisePool.query(
@@ -413,54 +373,50 @@ const deleteQRCode = async (req, res) => {
     }
 };
 
-// Helper function to format settings
-// merchant: row from merchants table (business info source of truth)
-// payment: row from payment_settings table (QR source of truth)
-const formatSettings = (dbRow, merchant = {}, payment = {}) => {
+// Helper function to format receipt-specific settings only
+const formatSettings = (dbRow) => {
     return {
-        id: dbRow.id,
-        // Business info: merchants table is source of truth; fall back to receipt_settings
-        businessName: merchant.business_name || dbRow.business_name || '',
-        address:      merchant.address       || dbRow.address       || '',
-        city:         dbRow.city             || '',
-        phone:        merchant.phone         || dbRow.phone         || '',
-        email:        merchant.email         || dbRow.email         || '',
-        website:      merchant.website       || dbRow.website       || '',
-        taxId:        merchant.tax_id        || dbRow.tax_id        || '',
-        logoUrl: dbRow.logo_url,
-        showLogo: Boolean(dbRow.show_logo),
-        logoSize: dbRow.logo_size,
-        logoWidth: dbRow.logo_width || 80,
-        logoHeight: dbRow.logo_height || 80,
-        logoMarginTop: dbRow.logo_margin_top || 0,
-        logoMarginBottom: dbRow.logo_margin_bottom || 8,
-        headerText: dbRow.header_text,
-        showHeader: Boolean(dbRow.show_header),
-        headerAlign: dbRow.header_align,
-        footerText: dbRow.footer_text,
-        showFooter: Boolean(dbRow.show_footer),
-        footerAlign: dbRow.footer_align,
-        showTaxId: Boolean(dbRow.show_tax_id),
-        showWebsite: Boolean(dbRow.show_website),
-        showEmail: Boolean(dbRow.show_email),
-        paperSize: dbRow.paper_size,
-        fontFamily: dbRow.font_family,
-        fontSize: dbRow.font_size,
-        additionalInfo: dbRow.additional_info,
+        id:              dbRow.id              || null,
+        businessName:    dbRow.business_name   || '',
+        address:         dbRow.address         || '',
+        city:            dbRow.city            || '',
+        phone:           dbRow.phone           || '',
+        email:           dbRow.email           || '',
+        website:         dbRow.website         || '',
+        taxId:           dbRow.tax_id          || '',
+        logoUrl:         dbRow.logo_url        || null,
+        showLogo:        Boolean(dbRow.show_logo),
+        logoSize:        dbRow.logo_size       || 'medium',
+        logoWidth:       dbRow.logo_width      || 80,
+        logoHeight:      dbRow.logo_height     || 80,
+        logoMarginTop:   dbRow.logo_margin_top    || 0,
+        logoMarginBottom:dbRow.logo_margin_bottom || 8,
+        headerText:      dbRow.header_text     || '',
+        showHeader:      Boolean(dbRow.show_header),
+        headerAlign:     dbRow.header_align    || 'center',
+        footerText:      dbRow.footer_text     || '',
+        showFooter:      Boolean(dbRow.show_footer),
+        footerAlign:     dbRow.footer_align    || 'center',
+        showTaxId:       Boolean(dbRow.show_tax_id),
+        showWebsite:     Boolean(dbRow.show_website),
+        showEmail:       Boolean(dbRow.show_email),
+        paperSize:       dbRow.paper_size      || '80mm',
+        fontFamily:      dbRow.font_family     || 'monospace',
+        fontSize:        dbRow.font_size       || 'medium',
+        additionalInfo:  dbRow.additional_info || '',
         showOrderNumber: Boolean(dbRow.show_order_number),
-        showDateTime: Boolean(dbRow.show_date_time),
-        showCashier: Boolean(dbRow.show_cashier),
+        showDateTime:    Boolean(dbRow.show_date_time),
+        showCashier:     Boolean(dbRow.show_cashier),
         showTableNumber: Boolean(dbRow.show_table_number),
-        showQRCode: Boolean(dbRow.show_qr_code),
-        qrCodeData: dbRow.qr_code_data,
-        // QR code: payment_settings is source of truth; fall back to receipt_settings
-        qrCodeUrl: payment.mobile_qr_url || dbRow.qr_code_url || null,
-        qrCodeWidth: dbRow.qr_code_width || 100,
-        qrCodeHeight: dbRow.qr_code_height || 100,
-        qrCodeMarginTop: dbRow.qr_code_margin_top || 12,
+        showQRCode:      Boolean(dbRow.show_qr_code),
+        qrCodeData:      dbRow.qr_code_data    || '',
+        qrCodeUrl:       dbRow.qr_code_url     || null,
+        qrCodeWidth:     dbRow.qr_code_width   || 100,
+        qrCodeHeight:    dbRow.qr_code_height  || 100,
+        qrCodeMarginTop: dbRow.qr_code_margin_top    || 12,
         qrCodeMarginBottom: dbRow.qr_code_margin_bottom || 0,
-        createdAt: dbRow.created_at,
-        updatedAt: dbRow.updated_at,
+        createdAt:       dbRow.created_at      || null,
+        updatedAt:       dbRow.updated_at      || null,
     };
 };
 
