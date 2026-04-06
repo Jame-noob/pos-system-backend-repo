@@ -25,8 +25,8 @@ const getSettings = async (req, res) => {
 
         if (settings.length === 0) {
             await promisePool.query(
-                `INSERT INTO receipt_settings (merchant_id, created_by, business_name, updated_date)
-                 VALUES (?, ?, '', NOW())`,
+                `INSERT INTO receipt_settings (merchant_id, created_by, business_name)
+                 VALUES (?, ?, '')`,
                 [merchantId, req.user.id]
             );
             const [newSettings] = await promisePool.query(
@@ -106,8 +106,8 @@ const updateSettings = async (req, res) => {
 
         if (existing.length === 0) {
             await promisePool.query(
-                `INSERT INTO receipt_settings (merchant_id, created_by, business_name, updated_date)
-                 VALUES (?, ?, '', NOW())`,
+                `INSERT INTO receipt_settings (merchant_id, created_by, business_name)
+                 VALUES (?, ?, '')`,
                 [merchantId, req.user.id]
             );
         } else if (existing[0].deleted_at) {
@@ -174,8 +174,7 @@ const updateSettings = async (req, res) => {
                 qr_code_margin_top = ?,
                 qr_code_margin_bottom = ?,
                 updated_by = ?,
-                updated_at = CURRENT_TIMESTAMP,
-                updated_date = NOW()
+                updated_at = CURRENT_TIMESTAMP
             WHERE merchant_id = ?`,
             [
                 businessName,
@@ -273,7 +272,7 @@ const uploadLogo = async (req, res) => {
         const logoUrl = `/uploads/logos/${req.file.filename}`;
 
         await promisePool.query(
-            'UPDATE receipt_settings SET logo_url = ?, updated_by = ?, updated_at = CURRENT_TIMESTAMP, updated_date = NOW() WHERE merchant_id = ?',
+            'UPDATE receipt_settings SET logo_url = ?, updated_by = ?, updated_at = CURRENT_TIMESTAMP WHERE merchant_id = ?',
             [logoUrl, req.user.id, merchantId]
         );
 
@@ -310,7 +309,7 @@ const deleteLogo = async (req, res) => {
         }
 
         await promisePool.query(
-            'UPDATE receipt_settings SET logo_url = NULL, updated_by = ?, updated_at = CURRENT_TIMESTAMP, updated_date = NOW() WHERE merchant_id = ?',
+            'UPDATE receipt_settings SET logo_url = NULL, updated_by = ?, updated_at = CURRENT_TIMESTAMP WHERE merchant_id = ?',
             [req.user.id, merchantId]
         );
 
@@ -361,7 +360,7 @@ const uploadQRCode = async (req, res) => {
         const qrCodeUrl = `/uploads/qrcodes/${req.file.filename}`;
 
         await promisePool.query(
-            'UPDATE receipt_settings SET qr_code_url = ?, updated_by = ?, updated_at = CURRENT_TIMESTAMP, updated_date = NOW() WHERE merchant_id = ?',
+            'UPDATE receipt_settings SET qr_code_url = ?, updated_by = ?, updated_at = CURRENT_TIMESTAMP WHERE merchant_id = ?',
             [qrCodeUrl, req.user.id, merchantId]
         );
 
@@ -398,7 +397,7 @@ const deleteQRCode = async (req, res) => {
         }
 
         await promisePool.query(
-            'UPDATE receipt_settings SET qr_code_url = NULL, updated_by = ?, updated_at = CURRENT_TIMESTAMP, updated_date = NOW() WHERE merchant_id = ?',
+            'UPDATE receipt_settings SET qr_code_url = NULL, updated_by = ?, updated_at = CURRENT_TIMESTAMP WHERE merchant_id = ?',
             [req.user.id, merchantId]
         );
 
