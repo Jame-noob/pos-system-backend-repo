@@ -26,7 +26,8 @@ const getSettings = async (req, res) => {
         if (settings.length === 0) {
             await promisePool.query(
                 `INSERT INTO receipt_settings (merchant_id, created_by, business_name)
-                 VALUES (?, ?, '')`,
+                 VALUES (?, ?, '')
+                 ON DUPLICATE KEY UPDATE updated_at = CURRENT_TIMESTAMP`,
                 [merchantId, req.user.id]
             );
             const [newSettings] = await promisePool.query(
@@ -107,7 +108,8 @@ const updateSettings = async (req, res) => {
         if (existing.length === 0) {
             await promisePool.query(
                 `INSERT INTO receipt_settings (merchant_id, created_by, business_name)
-                 VALUES (?, ?, '')`,
+                 VALUES (?, ?, '')
+                 ON DUPLICATE KEY UPDATE updated_at = CURRENT_TIMESTAMP`,
                 [merchantId, req.user.id]
             );
         } else if (existing[0].deleted_at) {
