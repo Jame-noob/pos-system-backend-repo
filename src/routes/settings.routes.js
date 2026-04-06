@@ -6,6 +6,17 @@ const { verifyToken, checkRole } = require('../middleware/auth');
 const { ROLES } = require('../config/constants');
 const validate = require('../middleware/validator');
 
+// ── Dedicated per-category endpoints ─────────────────────────────────────────
+router.get('/merchant',  verifyToken, settingsController.getMerchantSettings);
+router.put('/merchant',  verifyToken, checkRole(ROLES.ADMIN), settingsController.updateMerchantSettings);
+
+router.get('/printer',   verifyToken, settingsController.getPrinterSettings);
+router.put('/printer',   verifyToken, checkRole(ROLES.ADMIN), settingsController.updatePrinterSettings);
+
+router.get('/payment',   verifyToken, settingsController.getPaymentSettings);
+router.put('/payment',   verifyToken, checkRole(ROLES.ADMIN), settingsController.updatePaymentSettings);
+
+// ── Legacy / combined endpoints ───────────────────────────────────────────────
 // Get all settings
 router.get('/', verifyToken, settingsController.getAllSettings);
 

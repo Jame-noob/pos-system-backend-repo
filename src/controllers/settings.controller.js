@@ -64,7 +64,7 @@ const getAllSettings = async (req, res) => {
 
         const [[merchants], [printers], [payments], [settings]] = await Promise.all([
             promisePool.query(
-                'SELECT business_name, address, phone, email, website, tax_id, currency, tax_rate FROM merchants WHERE merchant_id = ?',
+                'SELECT merchant_name, business_name, address, phone, email, website, tax_id, currency, tax_rate FROM merchants WHERE merchant_id = ?',
                 [merchantId]
             ),
             promisePool.query(
@@ -86,8 +86,8 @@ const getAllSettings = async (req, res) => {
         const pay = payments[0] || {};
 
         const settingsObj = {
-            // General — from merchants
-            general_business_name: m.business_name || '',
+            // General — from merchants (business_name takes priority, falls back to merchant_name)
+            general_business_name: m.business_name || m.merchant_name || '',
             general_address:       m.address       || '',
             general_phone:         m.phone         || '',
             general_email:         m.email         || '',
@@ -320,10 +320,165 @@ const createSetting = async (req, res) => {
     }
 };
 
+// ── Merchant (General) settings ──────────────────────────────────────────────
+
+const getMerchantSettings = async (req, res) => {
+    try {
+        const merchantId = req.user.merchant_id;
+        const [rows] = await promisePool.query(
+            'SELECT merchant_name, business_name, address, phone, email, website, tax_id, currency, tax_rate FROM merchants WHERE merchant_id = ?',
+            [merchantId]
+        );
+        const m = rows[0] || {};
+        sendSuccess(res, {
+            general_business_name: m.business_name || m.merchant_name || '',
+            general_address:       m.address       || '',
+            general_phone:         m.phone         || '',
+            general_email:         m.email         || '',
+            general_website:       m.website       || '',
+            general_tax_id:        m.tax_id        || '',
+            general_currency:      m.currency      || 'LAK',
+            general_tax_rate:      m.tax_rate      !== undefined ? m.tax_rate : 10,
+        }, 'Merchant settings retrieved successfully');
+    } catch (error) {
+        log.error('Get merchant settings error:', error);
+        sendError(res, 'Failed to retrieve merchant settings', 500);
+    }
+};
+
+const updateMerchantSettings = async (req, res) => {
+    try {
+        const merchantId = req.user.merchant_id;
+        const { general_business_name, general_address, general_phone, general_email,
+                general_website, general_tax_id, general_currency, general_tax_rate } = req.body;
+
+        const businessName = general_business_name || '';
+        await promisePool.query(
+            `INSERT INTO merchants (merchant_id, merchant_name, merchant_name_la, created_by, created_date,
+                business_name, address, phone, email, website, tax_id, currency, tax_rate)
+             VALUES (?, ?, ?, ?, NOW(), ?, ?, ?, ?, ?, ?, ?, ?)
+             ON DUPLICATE KEY UPDATE
+                business_name = VALUES(business_name),
+                address       = VALUES(address),
+                phone         = VALUES(phone),
+                email         = VALUES(email),
+                website       = VALUES(website),
+                tax_id        = VALUES(tax_id),
+                currency      = VALUES(currency),
+                tax_rate      = VALUES(tax_rate),
+                updated_at    = CURRENT_TIMESTAMP`,
+            [merchantId, businessName, businessName, String(merchantId),
+             businessName, general_address || '', general_phone || '', general_email || '',
+             general_website || '', general_tax_id || '',
+             general_currency || 'LAK', general_tax_rate || 10]
+        );
+        log.info(`Merchant settings updated for merchant_id=${merchantId}`);
+        sendSuccess(res, req.body, 'Merchant settings updated successfully');
+    } catch (error) {
+        log.error('Update merchant settings error:', error);
+        sendError(res, 'Failed to update merchant settings', 500);
+    }
+};
+
+// ── Printer settings ──────────────────────────────────────────────────────────
+
+const getPrinterSettings = async (req, res) => {
+    try {
+        const merchantId = req.user.merchant_id;
+        const [rows] = await promisePool.query(
+            'SELECT printer_type, printer_name, printer_copies, auto_print FROM printer_settings WHERE merchant_id = ?',
+            [merchantId]
+        );
+        const p = rows[0] || {};
+        sendSuccess(res, {
+            printer_type:       p.printer_type   || 'thermal',
+            printer_name:       p.printer_name   || '',
+            printer_copies:     p.printer_copies || 1,
+            printer_auto_print: Boolean(p.auto_print),
+        }, 'Printer settings retrieved successfully');
+    } catch (error) {
+        log.error('Get printer settings error:', error);
+        sendError(res, 'Failed to retrieve printer settings', 500);
+    }
+};
+
+const updatePrinterSettings = async (req, res) => {
+    try {
+        const merchantId = req.user.merchant_id;
+        const { printer_type, printer_name, printer_copies, printer_auto_print } = req.body;
+        const connection = await promisePool.getConnection();
+        try {
+            await upsertMerchantTable(connection, 'printer_settings', merchantId, {
+                printer_type:  printer_type  || 'thermal',
+                printer_name:  printer_name  || '',
+                printer_copies:printer_copies || 1,
+                auto_print:    printer_auto_print ? 1 : 0,
+            });
+        } finally { connection.release(); }
+        log.info(`Printer settings updated for merchant_id=${merchantId}`);
+        sendSuccess(res, req.body, 'Printer settings updated successfully');
+    } catch (error) {
+        log.error('Update printer settings error:', error);
+        sendError(res, 'Failed to update printer settings', 500);
+    }
+};
+
+// ── Payment settings ──────────────────────────────────────────────────────────
+
+const getPaymentSettings = async (req, res) => {
+    try {
+        const merchantId = req.user.merchant_id;
+        const [rows] = await promisePool.query(
+            'SELECT cash_enabled, card_enabled, mobile_enabled, mobile_qr_url, mobile_qr_filename FROM payment_settings WHERE merchant_id = ?',
+            [merchantId]
+        );
+        const pay = rows[0] || {};
+        sendSuccess(res, {
+            payment_cash_enabled:       Boolean(pay.cash_enabled   ?? 1),
+            payment_card_enabled:       Boolean(pay.card_enabled   ?? 0),
+            payment_mobile_enabled:     Boolean(pay.mobile_enabled ?? 0),
+            payment_mobile_qr_url:      pay.mobile_qr_url      || '',
+            payment_mobile_qr_filename: pay.mobile_qr_filename || '',
+        }, 'Payment settings retrieved successfully');
+    } catch (error) {
+        log.error('Get payment settings error:', error);
+        sendError(res, 'Failed to retrieve payment settings', 500);
+    }
+};
+
+const updatePaymentSettings = async (req, res) => {
+    try {
+        const merchantId = req.user.merchant_id;
+        const { payment_cash_enabled, payment_card_enabled, payment_mobile_enabled,
+                payment_mobile_qr_url, payment_mobile_qr_filename } = req.body;
+        const connection = await promisePool.getConnection();
+        try {
+            await upsertMerchantTable(connection, 'payment_settings', merchantId, {
+                cash_enabled:       payment_cash_enabled   ? 1 : 0,
+                card_enabled:       payment_card_enabled   ? 1 : 0,
+                mobile_enabled:     payment_mobile_enabled ? 1 : 0,
+                mobile_qr_url:      payment_mobile_qr_url      || null,
+                mobile_qr_filename: payment_mobile_qr_filename || null,
+            });
+        } finally { connection.release(); }
+        log.info(`Payment settings updated for merchant_id=${merchantId}`);
+        sendSuccess(res, req.body, 'Payment settings updated successfully');
+    } catch (error) {
+        log.error('Update payment settings error:', error);
+        sendError(res, 'Failed to update payment settings', 500);
+    }
+};
+
 module.exports = {
     getAllSettings,
     getSettingByKey,
     updateSetting,
     updateMultipleSettings,
-    createSetting
+    createSetting,
+    getMerchantSettings,
+    updateMerchantSettings,
+    getPrinterSettings,
+    updatePrinterSettings,
+    getPaymentSettings,
+    updatePaymentSettings,
 };
