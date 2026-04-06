@@ -39,7 +39,7 @@ const verifyToken = async (req, res, next) => {
 
         // Check if user exists
         const [users] = await promisePool.query(
-            'SELECT id, username, email, full_name, role, is_active FROM users WHERE id = ? AND deleted_at IS NULL',
+            'SELECT id, username, email, full_name, role, is_active, merchant_id FROM users WHERE id = ? AND deleted_at IS NULL',
             [decoded.userId]
         );
 

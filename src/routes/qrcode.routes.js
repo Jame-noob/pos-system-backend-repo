@@ -13,15 +13,15 @@ router.get('/', async (req, res) => {
         log.info('QR Code requested:', { orderId, amount, tableNumber });
 
         // Path to your QR code image
-        const qrCodePath = path.join(__dirname, '../uploads/qrcodes/bcelQrCodeLogo.jpeg');
+        const qrCodePath = path.join(__dirname, '../uploads/qrcodes/khammouneNiyomQR.png');
 
         // Check if file exists
         if (!fs.existsSync(qrCodePath)) {
             log.error('QR Code file not found:', qrCodePath);
-            return res.status(404).json({ 
+            return res.status(404).json({
                 success: false,
                 error: 'QR Code not found',
-                path: qrCodePath 
+                path: qrCodePath
             });
         }
 
@@ -36,10 +36,10 @@ router.get('/', async (req, res) => {
 
     } catch (error) {
         log.error('Error serving QR code:', error);
-        res.status(500).json({ 
+        res.status(500).json({
             success: false,
             error: 'Failed to load QR code',
-            message: error.message 
+            message: error.message
         });
     }
 });

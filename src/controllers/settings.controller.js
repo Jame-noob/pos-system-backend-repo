@@ -132,29 +132,26 @@ const updateMultipleSettings = async (req, res) => {
         }
 
         for (const [key, value] of Object.entries(settings)) {
-            // Get setting type
-            const [existing] = await connection.query(
-                'SELECT setting_type FROM settings WHERE setting_key = ?',
-                [key]
-            );
+            const settingType = typeof value === 'boolean' ? 'boolean'
+                : typeof value === 'number' ? 'number'
+                : typeof value === 'object' ? 'json'
+                : 'string';
 
-            if (existing.length > 0) {
-                let valueToStore = value;
-
-                // Convert value to string based on type
-                if (existing[0].setting_type === 'json') {
-                    valueToStore = JSON.stringify(value);
-                } else if (existing[0].setting_type === 'boolean') {
-                    valueToStore = value ? 'true' : 'false';
-                } else {
-                    valueToStore = value.toString();
-                }
-
-                await connection.query(
-                    'UPDATE settings SET setting_value = ?, updated_at = CURRENT_TIMESTAMP WHERE setting_key = ?',
-                    [valueToStore, key]
-                );
+            let valueToStore = value;
+            if (settingType === 'json') {
+                valueToStore = JSON.stringify(value);
+            } else if (settingType === 'boolean') {
+                valueToStore = value ? 'true' : 'false';
+            } else {
+                valueToStore = value !== null && value !== undefined ? value.toString() : '';
             }
+
+            await connection.query(
+                `INSERT INTO settings (setting_key, setting_value, setting_type)
+                 VALUES (?, ?, ?)
+                 ON DUPLICATE KEY UPDATE setting_value = ?, updated_at = CURRENT_TIMESTAMP`,
+                [key, valueToStore, settingType, valueToStore]
+            );
         }
 
         await connection.commit();

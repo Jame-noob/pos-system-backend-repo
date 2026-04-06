@@ -22,6 +22,7 @@ const uploadRoutes = require('./routes/upload.routes');
 const receiptSettingsRoutes = require('./routes/receiptSettings.routes');
 const productImportRoutes = require('./routes/productImport.routes');
 const qrCodeRoutes = require('./routes/qrcode.routes');
+const usersRoutes = require('./routes/users.routes');
 
 // Create Express app
 const app = express();
@@ -76,14 +77,16 @@ app.use(`${API_PREFIX}/payments`, paymentsRoutes);
 app.use(`${API_PREFIX}/reports`, reportsRoutes);
 app.use(`${API_PREFIX}/settings`, settingsRoutes);
 app.use(`${API_PREFIX}/upload`, uploadRoutes);
+
+app.use(`${API_PREFIX}/users`, usersRoutes);
 app.use(`${API_PREFIX}/receipt-settings`, receiptSettingsRoutes);
 app.use(`${API_PREFIX}/products/bulk`, productImportRoutes);
 app.use(`${API_PREFIX}/qrcode`, qrCodeRoutes);
 
 
 const uploadsPath = path.join(__dirname, 'uploads');
+app.use(`${API_PREFIX}/uploads`, express.static(path.join(__dirname, 'uploads')));
 app.use('/uploads', express.static(uploadsPath));
-app.use('/api/v1/uploads', express.static(path.join(__dirname, 'uploads')));
 log.info('✅ Static files served at /uploads');
 // Error handling
 app.use(notFound);

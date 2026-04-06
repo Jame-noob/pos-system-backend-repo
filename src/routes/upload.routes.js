@@ -132,6 +132,55 @@ router.post('/image', verifyToken, (req, res) => {
     });
 });
 
+// Upload payment QR code
+router.post('/qrcode', verifyToken, (req, res) => {
+    const qrStorage = multer.diskStorage({
+        destination: (req, file, cb) => {
+            if (!fs.existsSync(paths.QRCODE_DIR)) {
+                fs.mkdirSync(paths.QRCODE_DIR, { recursive: true });
+            }
+            cb(null, paths.QRCODE_DIR);
+        },
+        filename: (req, file, cb) => {
+            const ext = path.extname(file.originalname);
+            cb(null, 'payment-qr-' + Date.now() + ext);
+        }
+    });
+
+    const qrUpload = multer({
+        storage: qrStorage,
+        limits: { fileSize: 5 * 1024 * 1024 },
+        fileFilter
+    });
+
+    qrUpload.single('qrcode')(req, res, (err) => {
+        if (err) return sendError(res, err.message, 400);
+        if (!req.file) return sendError(res, 'No file uploaded', 400);
+
+        const url = `${paths.QRCODE_URL}/${req.file.filename}`;
+        log.success('QR code uploaded', { filename: req.file.filename });
+        sendSuccess(res, { url, filename: req.file.filename }, 'QR code uploaded successfully');
+    });
+});
+
+// Delete payment QR code
+router.delete('/qrcode/:filename', verifyToken, (req, res) => {
+    try {
+        const { filename } = req.params;
+        const filepath = path.join(paths.QRCODE_DIR, filename);
+
+        if (fs.existsSync(filepath)) {
+            fs.unlinkSync(filepath);
+            sendSuccess(res, null, 'QR code deleted successfully');
+        } else {
+            sendError(res, 'QR code not found', 404);
+        }
+    } catch (error) {
+        log.error('Delete QR code error:', error);
+        sendError(res, 'Failed to delete QR code', 500);
+    }
+});
+
 // Delete image
 router.delete('/image/:filename', verifyToken, (req, res) => {
     try {

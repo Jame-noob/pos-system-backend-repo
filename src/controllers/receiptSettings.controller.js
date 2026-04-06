@@ -9,21 +9,25 @@ const fs = require('fs').promises;
 // Get receipt settings
 const getSettings = async (req, res) => {
     try {
+        const merchantId = req.user.merchant_id;
+
         const [settings] = await promisePool.query(
-            'SELECT * FROM receipt_settings WHERE id = 1 AND deleted_at IS NULL'
+            'SELECT * FROM receipt_settings WHERE merchant_id = ? AND deleted_at IS NULL',
+            [merchantId]
         );
 
         if (settings.length === 0) {
-            // Create default settings if not exists
+            // Create default settings for this merchant
             await promisePool.query(
-                'INSERT INTO receipt_settings (id, created_by) VALUES (1, ?)',
-                [req.user.id]
+                'INSERT INTO receipt_settings (merchant_id, created_by) VALUES (?, ?)',
+                [merchantId, req.user.id]
             );
-            
+
             const [newSettings] = await promisePool.query(
-                'SELECT * FROM receipt_settings WHERE id = 1'
+                'SELECT * FROM receipt_settings WHERE merchant_id = ?',
+                [merchantId]
             );
-            
+
             return sendSuccess(res, formatSettings(newSettings[0]), 'Receipt settings retrieved successfully');
         }
 
@@ -38,6 +42,7 @@ const getSettings = async (req, res) => {
 // Update receipt settings
 const updateSettings = async (req, res) => {
     try {
+        const merchantId = req.user.merchant_id;
         const {
             businessName,
             address,
@@ -49,10 +54,10 @@ const updateSettings = async (req, res) => {
             logoUrl,
             showLogo,
             logoSize,
-            logoWidth,           // Add
-            logoHeight,          // Add
-            logoMarginTop,       // Add
-            logoMarginBottom,    // Add
+            logoWidth,
+            logoHeight,
+            logoMarginTop,
+            logoMarginBottom,
             headerText,
             showHeader,
             headerAlign,
@@ -73,10 +78,10 @@ const updateSettings = async (req, res) => {
             showQRCode,
             qrCodeData,
             qrCodeUrl,
-            qrCodeWidth,         // Add
-            qrCodeHeight,        // Add
-            qrCodeMarginTop,     // Add
-            qrCodeMarginBottom,  // Add
+            qrCodeWidth,
+            qrCodeHeight,
+            qrCodeMarginTop,
+            qrCodeMarginBottom,
         } = req.body;
 
         await promisePool.query(
@@ -121,7 +126,7 @@ const updateSettings = async (req, res) => {
                 qr_code_margin_bottom = ?,
                 updated_by = ?,
                 updated_at = CURRENT_TIMESTAMP
-            WHERE id = 1`,
+            WHERE merchant_id = ?`,
             [
                 businessName,
                 address,
@@ -161,16 +166,17 @@ const updateSettings = async (req, res) => {
                 qrCodeHeight || 100,
                 qrCodeMarginTop || 12,
                 qrCodeMarginBottom || 0,
-                req.user.id
+                req.user.id,
+                merchantId,
             ]
         );
 
-
         const [updatedSettings] = await promisePool.query(
-            'SELECT * FROM receipt_settings WHERE id = 1'
+            'SELECT * FROM receipt_settings WHERE merchant_id = ?',
+            [merchantId]
         );
 
-        log.info(`Receipt settings updated by user: ${req.user.id}`);
+        log.info(`Receipt settings updated by user: ${req.user.id} merchant: ${merchantId}`);
 
         sendSuccess(res, formatSettings(updatedSettings[0]), 'Receipt settings updated successfully');
 
@@ -183,26 +189,26 @@ const updateSettings = async (req, res) => {
 // Upload logo
 const uploadLogo = async (req, res) => {
     try {
+        const merchantId = req.user.merchant_id;
+
         if (!req.file) {
             return sendError(res, 'No file uploaded', 400);
         }
 
-        // Validate file type
         const allowedTypes = ['image/jpeg', 'image/jpg', 'image/png', 'image/gif', 'image/webp'];
         if (!allowedTypes.includes(req.file.mimetype)) {
             await fs.unlink(req.file.path);
             return sendError(res, 'Invalid file type. Only images are allowed.', 400);
         }
 
-        // Validate file size (2MB max)
         if (req.file.size > 2 * 1024 * 1024) {
             await fs.unlink(req.file.path);
             return sendError(res, 'File size must be less than 2MB', 400);
         }
 
-        // Get current settings to delete old logo if exists
         const [currentSettings] = await promisePool.query(
-            'SELECT logo_url FROM receipt_settings WHERE id = 1'
+            'SELECT logo_url FROM receipt_settings WHERE merchant_id = ?',
+            [merchantId]
         );
 
         if (currentSettings.length > 0 && currentSettings[0].logo_url) {
@@ -214,31 +220,22 @@ const uploadLogo = async (req, res) => {
             }
         }
 
-        // Generate logo URL
         const logoUrl = `/uploads/logos/${req.file.filename}`;
 
-        // Update database
         await promisePool.query(
-            'UPDATE receipt_settings SET logo_url = ?, updated_by = ?, updated_at = CURRENT_TIMESTAMP WHERE id = 1',
-            [logoUrl, req.user.id]
+            'UPDATE receipt_settings SET logo_url = ?, updated_by = ?, updated_at = CURRENT_TIMESTAMP WHERE merchant_id = ?',
+            [logoUrl, req.user.id, merchantId]
         );
 
-        log.info(`Logo uploaded by user: ${req.user.id}`);
+        log.info(`Logo uploaded by user: ${req.user.id} merchant: ${merchantId}`);
 
         sendSuccess(res, { logoUrl }, 'Logo uploaded successfully');
 
     } catch (error) {
         log.error('Upload logo error:', error);
-        
-        // Try to delete uploaded file if error occurs
         if (req.file) {
-            try {
-                await fs.unlink(req.file.path);
-            } catch (unlinkError) {
-                log.error('Error deleting file after error:', unlinkError);
-            }
+            try { await fs.unlink(req.file.path); } catch (_) {}
         }
-
         sendError(res, 'Failed to upload logo', 500);
     }
 };
@@ -246,9 +243,11 @@ const uploadLogo = async (req, res) => {
 // Delete logo
 const deleteLogo = async (req, res) => {
     try {
-        // Get current settings to find logo path
+        const merchantId = req.user.merchant_id;
+
         const [currentSettings] = await promisePool.query(
-            'SELECT logo_url FROM receipt_settings WHERE id = 1'
+            'SELECT logo_url FROM receipt_settings WHERE merchant_id = ?',
+            [merchantId]
         );
 
         if (currentSettings.length > 0 && currentSettings[0].logo_url) {
@@ -260,13 +259,12 @@ const deleteLogo = async (req, res) => {
             }
         }
 
-        // Update database
         await promisePool.query(
-            'UPDATE receipt_settings SET logo_url = NULL, updated_by = ?, updated_at = CURRENT_TIMESTAMP WHERE id = 1',
-            [req.user.id]
+            'UPDATE receipt_settings SET logo_url = NULL, updated_by = ?, updated_at = CURRENT_TIMESTAMP WHERE merchant_id = ?',
+            [req.user.id, merchantId]
         );
 
-        log.info(`Logo deleted by user: ${req.user.id}`);
+        log.info(`Logo deleted by user: ${req.user.id} merchant: ${merchantId}`);
 
         sendSuccess(res, null, 'Logo deleted successfully');
 
@@ -276,30 +274,29 @@ const deleteLogo = async (req, res) => {
     }
 };
 
-
-// Add new function to upload QR code
+// Upload QR code
 const uploadQRCode = async (req, res) => {
     try {
+        const merchantId = req.user.merchant_id;
+
         if (!req.file) {
             return sendError(res, 'No file uploaded', 400);
         }
 
-        // Validate file type
         const allowedTypes = ['image/jpeg', 'image/jpg', 'image/png', 'image/gif', 'image/webp'];
         if (!allowedTypes.includes(req.file.mimetype)) {
             await fs.unlink(req.file.path);
             return sendError(res, 'Invalid file type. Only images are allowed.', 400);
         }
 
-        // Validate file size (2MB max)
         if (req.file.size > 2 * 1024 * 1024) {
             await fs.unlink(req.file.path);
             return sendError(res, 'File size must be less than 2MB', 400);
         }
 
-        // Get current settings to delete old QR code if exists
         const [currentSettings] = await promisePool.query(
-            'SELECT qr_code_url FROM receipt_settings WHERE id = 1'
+            'SELECT qr_code_url FROM receipt_settings WHERE merchant_id = ?',
+            [merchantId]
         );
 
         if (currentSettings.length > 0 && currentSettings[0].qr_code_url) {
@@ -311,41 +308,34 @@ const uploadQRCode = async (req, res) => {
             }
         }
 
-        // Generate QR code URL
         const qrCodeUrl = `/uploads/qrcodes/${req.file.filename}`;
 
-        // Update database
         await promisePool.query(
-            'UPDATE receipt_settings SET qr_code_url = ?, updated_by = ?, updated_at = CURRENT_TIMESTAMP WHERE id = 1',
-            [qrCodeUrl, req.user.id]
+            'UPDATE receipt_settings SET qr_code_url = ?, updated_by = ?, updated_at = CURRENT_TIMESTAMP WHERE merchant_id = ?',
+            [qrCodeUrl, req.user.id, merchantId]
         );
 
-        log.info(`QR code uploaded by user: ${req.user.id}`);
+        log.info(`QR code uploaded by user: ${req.user.id} merchant: ${merchantId}`);
 
         sendSuccess(res, { qrCodeUrl }, 'QR code uploaded successfully');
 
     } catch (error) {
         log.error('Upload QR code error:', error);
-        
-        // Try to delete uploaded file if error occurs
         if (req.file) {
-            try {
-                await fs.unlink(req.file.path);
-            } catch (unlinkError) {
-                log.error('Error deleting file after error:', unlinkError);
-            }
+            try { await fs.unlink(req.file.path); } catch (_) {}
         }
-
         sendError(res, 'Failed to upload QR code', 500);
     }
 };
 
-// Add new function to delete QR code
+// Delete QR code
 const deleteQRCode = async (req, res) => {
     try {
-        // Get current settings to find QR code path
+        const merchantId = req.user.merchant_id;
+
         const [currentSettings] = await promisePool.query(
-            'SELECT qr_code_url FROM receipt_settings WHERE id = 1'
+            'SELECT qr_code_url FROM receipt_settings WHERE merchant_id = ?',
+            [merchantId]
         );
 
         if (currentSettings.length > 0 && currentSettings[0].qr_code_url) {
@@ -357,13 +347,12 @@ const deleteQRCode = async (req, res) => {
             }
         }
 
-        // Update database
         await promisePool.query(
-            'UPDATE receipt_settings SET qr_code_url = NULL, updated_by = ?, updated_at = CURRENT_TIMESTAMP WHERE id = 1',
-            [req.user.id]
+            'UPDATE receipt_settings SET qr_code_url = NULL, updated_by = ?, updated_at = CURRENT_TIMESTAMP WHERE merchant_id = ?',
+            [req.user.id, merchantId]
         );
 
-        log.info(`QR code deleted by user: ${req.user.id}`);
+        log.info(`QR code deleted by user: ${req.user.id} merchant: ${merchantId}`);
 
         sendSuccess(res, null, 'QR code deleted successfully');
 
@@ -372,8 +361,6 @@ const deleteQRCode = async (req, res) => {
         sendError(res, 'Failed to delete QR code', 500);
     }
 };
-
-
 
 // Helper function to format settings
 const formatSettings = (dbRow) => {
@@ -389,10 +376,10 @@ const formatSettings = (dbRow) => {
         logoUrl: dbRow.logo_url,
         showLogo: Boolean(dbRow.show_logo),
         logoSize: dbRow.logo_size,
-        logoWidth: dbRow.logo_width || 80,           // Add
-        logoHeight: dbRow.logo_height || 80,         // Add
-        logoMarginTop: dbRow.logo_margin_top || 0,   // Add
-        logoMarginBottom: dbRow.logo_margin_bottom || 8, // Add
+        logoWidth: dbRow.logo_width || 80,
+        logoHeight: dbRow.logo_height || 80,
+        logoMarginTop: dbRow.logo_margin_top || 0,
+        logoMarginBottom: dbRow.logo_margin_bottom || 8,
         headerText: dbRow.header_text,
         showHeader: Boolean(dbRow.show_header),
         headerAlign: dbRow.header_align,
@@ -413,10 +400,10 @@ const formatSettings = (dbRow) => {
         showQRCode: Boolean(dbRow.show_qr_code),
         qrCodeData: dbRow.qr_code_data,
         qrCodeUrl: dbRow.qr_code_url,
-        qrCodeWidth: dbRow.qr_code_width || 100,         // Add
-        qrCodeHeight: dbRow.qr_code_height || 100,       // Add
-        qrCodeMarginTop: dbRow.qr_code_margin_top || 12, // Add
-        qrCodeMarginBottom: dbRow.qr_code_margin_bottom || 0, // Add
+        qrCodeWidth: dbRow.qr_code_width || 100,
+        qrCodeHeight: dbRow.qr_code_height || 100,
+        qrCodeMarginTop: dbRow.qr_code_margin_top || 12,
+        qrCodeMarginBottom: dbRow.qr_code_margin_bottom || 0,
         createdAt: dbRow.created_at,
         updatedAt: dbRow.updated_at,
     };
@@ -427,6 +414,6 @@ module.exports = {
     updateSettings,
     uploadLogo,
     deleteLogo,
-    uploadQRCode,   // Add this
-    deleteQRCode,   // Add this
+    uploadQRCode,
+    deleteQRCode,
 };

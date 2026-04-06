@@ -6,17 +6,18 @@ const log = require('../utils/logger');
 const getAllPayments = async (req, res) => {
     try {
         const { date, payment_method, status } = req.query;
+        const merchantId = req.user.merchant_id;
 
         let query = `
-            SELECT p.*, 
-                   o.order_number, 
+            SELECT p.*,
+                   o.order_number,
                    u.full_name as processed_by_name
             FROM payments p
             LEFT JOIN orders o ON p.order_id = o.id
             LEFT JOIN users u ON p.processed_by = u.id
-            WHERE 1=1
+            WHERE p.merchant_id = ?
         `;
-        const params = [];
+        const params = [merchantId];
 
         if (date) {
             query += ' AND DATE(p.created_at) = ?';
@@ -49,16 +50,17 @@ const getAllPayments = async (req, res) => {
 const getPaymentById = async (req, res) => {
     try {
         const { id } = req.params;
+        const merchantId = req.user.merchant_id;
 
         const [payments] = await promisePool.query(
-            `SELECT p.*, 
+            `SELECT p.*,
                     o.order_number, o.total as order_total,
                     u.full_name as processed_by_name
              FROM payments p
              LEFT JOIN orders o ON p.order_id = o.id
              LEFT JOIN users u ON p.processed_by = u.id
-             WHERE p.id = ?`,
-            [id]
+             WHERE p.id = ? AND p.merchant_id = ?`,
+            [id, merchantId]
         );
 
         if (payments.length === 0) {
@@ -77,14 +79,15 @@ const getPaymentById = async (req, res) => {
 const getPaymentsByOrderId = async (req, res) => {
     try {
         const { orderId } = req.params;
+        const merchantId = req.user.merchant_id;
 
         const [payments] = await promisePool.query(
             `SELECT p.*, u.full_name as processed_by_name
              FROM payments p
              LEFT JOIN users u ON p.processed_by = u.id
-             WHERE p.order_id = ?
+             WHERE p.order_id = ? AND p.merchant_id = ?
              ORDER BY p.created_at DESC`,
-            [orderId]
+            [orderId, merchantId]
         );
 
         sendSuccess(res, payments, 'Payments retrieved successfully');
@@ -105,11 +108,11 @@ const refundPayment = async (req, res) => {
         const { id } = req.params;
         const { reason, refund_amount } = req.body;
         const user_id = req.user.id;
+        const merchantId = req.user.merchant_id;
 
-        // Get payment details
         const [payments] = await connection.query(
-            'SELECT * FROM payments WHERE id = ?',
-            [id]
+            'SELECT * FROM payments WHERE id = ? AND merchant_id = ?',
+            [id, merchantId]
         );
 
         if (payments.length === 0) {
@@ -124,23 +127,21 @@ const refundPayment = async (req, res) => {
 
         const amount_to_refund = refund_amount || payment.amount;
 
-        // Update payment status
         await connection.query(
-            `UPDATE payments SET 
+            `UPDATE payments SET
              status = 'refunded',
              notes = CONCAT(COALESCE(notes, ''), '\n[REFUNDED by user_id:', ?, '] Amount: ', ?, ' Reason: ', ?),
              updated_at = CURRENT_TIMESTAMP
-             WHERE id = ?`,
-            [user_id, amount_to_refund, reason || 'No reason provided', id]
+             WHERE id = ? AND merchant_id = ?`,
+            [user_id, amount_to_refund, reason || 'No reason provided', id, merchantId]
         );
 
-        // Update order payment status
         await connection.query(
-            `UPDATE orders SET 
+            `UPDATE orders SET
              payment_status = 'refunded',
              updated_at = CURRENT_TIMESTAMP
-             WHERE id = ?`,
-            [payment.order_id]
+             WHERE id = ? AND merchant_id = ?`,
+            [payment.order_id, merchantId]
         );
 
         await connection.commit();

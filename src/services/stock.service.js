@@ -1,7 +1,7 @@
 const { promisePool } = require('../config/database');
 const log = require('../utils/logger');
 
-const updateProductStock = async (productId, quantity, movementType, referenceType, referenceId, userId, notes = null) => {
+const updateProductStock = async (productId, quantity, movementType, referenceType, referenceId, userId, notes = null, merchantId = null) => {
     const connection = await promisePool.getConnection();
 
     try {
@@ -45,10 +45,10 @@ const updateProductStock = async (productId, quantity, movementType, referenceTy
 
         // Log stock movement
         await connection.query(
-            `INSERT INTO stock_movements 
-            (product_id, movement_type, quantity, reference_type, reference_id, previous_quantity, new_quantity, notes, created_by) 
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-            [productId, movementType, quantity, referenceType, referenceId, previousQuantity, newQuantity, notes, userId]
+            `INSERT INTO stock_movements
+            (product_id, movement_type, quantity, reference_type, reference_id, previous_quantity, new_quantity, notes, created_by, merchant_id)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            [productId, movementType, quantity, referenceType, referenceId, previousQuantity, newQuantity, notes, userId, merchantId]
         );
 
         await connection.commit();

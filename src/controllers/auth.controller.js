@@ -14,7 +14,7 @@ const login = async (req, res) => {
         // Find user
         log.db('SELECT user by username/email', [username]);
         const [users] = await promisePool.query(
-            `SELECT id, username, email, password_hash, full_name, role, is_active 
+            `SELECT id, username, email, password_hash, full_name, role, is_active, merchant_id
              FROM users 
              WHERE (username = ? OR email = ?) AND deleted_at IS NULL`,
             [username, username]
@@ -84,7 +84,7 @@ const getProfile = async (req, res) => {
         log.debug('Fetching profile for user', { userId: req.user.id });
 
         const [users] = await promisePool.query(
-            `SELECT id, username, email, full_name, role, is_active, last_login_at, created_at 
+            `SELECT id, username, email, full_name, role, is_active, last_login_at, created_at, merchant_id
              FROM users 
              WHERE id = ? AND deleted_at IS NULL`,
             [req.user.id]

@@ -15,7 +15,10 @@ const parseCSV = (filePath) => {
         let rowNumber = 0;
 
         require('fs').createReadStream(filePath)
-            .pipe(csv())
+            .pipe(csv({
+                bom: true,
+                mapHeaders: ({ header }) => header.replace(/^[^a-zA-Z\u0E80-\u0EFF_]+/, '').trim(),
+            }))
             .on('data', (data) => {
                 rowNumber++;
                 results.push({ ...data, rowNumber });
@@ -84,8 +87,13 @@ const importProducts = async (req, res) => {
         importId = importResult.insertId;
 
         // Parse CSV
-        log.info(`Parsing CSV file: ${req.file.originalname}`);
+        log.info(`[IMPORT] Parsing CSV: ${req.file.originalname} | user: ${req.user.id} | merchant: ${req.user.merchant_id}`);
         const { results } = await parseCSV(filePath);
+
+        log.info(`[IMPORT] Parsed ${results.length} rows`);
+        if (results.length > 0) {
+            log.info(`[IMPORT] CSV headers detected: ${Object.keys(results[0]).filter(k => k !== 'rowNumber').join(', ')}`);
+        }
 
         if (results.length === 0) {
             await promisePool.query(
@@ -108,11 +116,13 @@ const importProducts = async (req, res) => {
 
         // Process each row
         for (const row of results) {
+            log.info(`[IMPORT] Row ${row.rowNumber}: name="${row.name}" price="${row.price}" category_id="${row.category_id}"`);
             try {
                 // Validate row
                 const validationErrors = validateProductRow(row, row.rowNumber);
                 if (validationErrors.length > 0) {
                     failCount++;
+                    log.warn(`[IMPORT] Row ${row.rowNumber}: validation failed → ${validationErrors.join(', ')}`);
                     for (const error of validationErrors) {
                         errors.push({ rowNumber: row.rowNumber, error, rowData: row });
                         // Use backticks for column names
@@ -124,11 +134,12 @@ const importProducts = async (req, res) => {
                     continue;
                 }
 
-                // Check if category exists
+                // Check if category exists (scoped to merchant)
                 const [categories] = await promisePool.query(
-                    'SELECT id FROM categories WHERE id = ? AND deleted_at IS NULL',
-                    [parseInt(row.category_id)]
+                    'SELECT id FROM categories WHERE id = ? AND merchant_id = ? AND deleted_at IS NULL',
+                    [parseInt(row.category_id), req.user.merchant_id]
                 );
+                log.info(`[IMPORT] Row ${row.rowNumber}: category check id=${row.category_id} merchant=${req.user.merchant_id} → found=${categories.length}`);
 
                 if (categories.length === 0) {
                     failCount++;
@@ -142,11 +153,11 @@ const importProducts = async (req, res) => {
                     continue;
                 }
 
-                // Check for duplicate SKU or barcode (if provided)
+                // Check for duplicate SKU or barcode (scoped to merchant)
                 if (row.sku && row.sku.trim() !== '') {
                     const [existingSKU] = await promisePool.query(
-                        'SELECT id FROM products WHERE sku = ? AND deleted_at IS NULL',
-                        [row.sku.trim()]
+                        'SELECT id FROM products WHERE sku = ? AND merchant_id = ? AND deleted_at IS NULL',
+                        [row.sku.trim(), req.user.merchant_id]
                     );
                     if (existingSKU.length > 0) {
                         failCount++;
@@ -162,8 +173,8 @@ const importProducts = async (req, res) => {
 
                 if (row.barcode && row.barcode.trim() !== '') {
                     const [existingBarcode] = await promisePool.query(
-                        'SELECT id FROM products WHERE barcode = ? AND deleted_at IS NULL',
-                        [row.barcode.trim()]
+                        'SELECT id FROM products WHERE barcode = ? AND merchant_id = ? AND deleted_at IS NULL',
+                        [row.barcode.trim(), req.user.merchant_id]
                     );
                     if (existingBarcode.length > 0) {
                         failCount++;
@@ -192,18 +203,18 @@ const importProducts = async (req, res) => {
                     stock_quantity: row.stock_quantity && row.stock_quantity.trim() !== '' ? parseInt(row.stock_quantity) : 0,
                     low_stock_threshold: row.low_stock_threshold && row.low_stock_threshold.trim() !== '' ? parseInt(row.low_stock_threshold) : 10,
                     image_emoji: row.image_emoji && row.image_emoji.trim() !== '' ? row.image_emoji.trim() : '📦',
-                    image: row.image && row.image.trim() !== '' ? row.image.trim() : null,
+                    image_url: row.image_url && row.image_url.trim() !== '' ? row.image_url.trim() : null,
                     is_active: row.is_active && row.is_active.trim() !== '' ? parseInt(row.is_active) : 1,
                     created_by: req.user.id,
                 };
 
-                // Insert product
+                // Insert product (with merchant_id)
                 await promisePool.query(
                     `INSERT INTO products (
-                        name, slug, sku, barcode, category_id, description, 
-                        price, cost_price, stock_quantity, low_stock_threshold, 
-                        image_emoji, image_url, is_active, created_by
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                        name, slug, sku, barcode, category_id, description,
+                        price, cost_price, stock_quantity, low_stock_threshold,
+                        image_emoji, image_url, is_active, created_by, merchant_id
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
                     [
                         productData.name,
                         productData.slug,
@@ -216,23 +227,25 @@ const importProducts = async (req, res) => {
                         productData.stock_quantity,
                         productData.low_stock_threshold,
                         productData.image_emoji,
-                        productData.image_url,
+                        productData.image_url,  // null if not provided
                         productData.is_active,
                         productData.created_by,
+                        req.user.merchant_id,
                     ]
                 );
 
+                log.info(`[IMPORT] Row ${row.rowNumber}: ✅ inserted successfully`);
                 successCount++;
             } catch (error) {
                 failCount++;
                 const errorMsg = `Row ${row.rowNumber}: ${error.message}`;
                 errors.push({ rowNumber: row.rowNumber, error: errorMsg, rowData: row });
+                log.error(`[IMPORT] Row ${row.rowNumber}: ❌ DB error → ${error.message}`);
                 // Use backticks for column names
                 await promisePool.query(
                     `INSERT INTO product_import_errors (import_id, \`row_number\`, error_message, row_data) VALUES (?, ?, ?, ?)`,
                     [importId, row.rowNumber, errorMsg, JSON.stringify(row)]
                 );
-                log.error(`Error importing row ${row.rowNumber}:`, error);
             }
         }
 
@@ -250,7 +263,7 @@ const importProducts = async (req, res) => {
         // Delete uploaded file
         await fs.unlink(filePath);
 
-        log.info(`Import completed: ${successCount} successful, ${failCount} failed`);
+        log.info(`[IMPORT] ✅ Done: ${successCount} success, ${failCount} failed out of ${results.length} rows`);
 
         const result = {
             importId,
@@ -290,13 +303,15 @@ const importProducts = async (req, res) => {
 const getImportHistory = async (req, res) => {
     try {
         const [imports] = await promisePool.query(
-            `SELECT 
+            `SELECT
                 pi.*,
                 u.full_name as created_by_name
             FROM product_imports pi
             LEFT JOIN users u ON pi.created_by = u.id
+            WHERE u.merchant_id = ?
             ORDER BY pi.created_at DESC
-            LIMIT 50`
+            LIMIT 50`,
+            [req.user.merchant_id]
         );
 
         sendSuccess(res, imports, 'Import history retrieved successfully');
