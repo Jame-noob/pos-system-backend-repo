@@ -153,10 +153,15 @@ const updateMultipleSettings = async (req, res) => {
         }
 
         if (Object.keys(merchantData).length > 0) {
-            const setClauses = Object.keys(merchantData).map(col => `${col} = ?`).join(', ');
+            const businessName = merchantData.business_name || '';
+            const columns = ['merchant_id', 'merchant_name', 'merchant_name_la', 'created_by', 'created_date', ...Object.keys(merchantData)];
+            const values  = [merchantId, businessName, businessName, String(merchantId), new Date(), ...Object.values(merchantData)];
+            const setClauses = Object.keys(merchantData).map(col => `${col} = VALUES(${col})`).join(', ');
             await connection.query(
-                `UPDATE merchants SET ${setClauses}, updated_at = CURRENT_TIMESTAMP WHERE merchant_id = ?`,
-                [...Object.values(merchantData), merchantId]
+                `INSERT INTO merchants (${columns.join(', ')})
+                 VALUES (${columns.map(() => '?').join(', ')})
+                 ON DUPLICATE KEY UPDATE ${setClauses}, updated_at = CURRENT_TIMESTAMP`,
+                values
             );
         }
 
