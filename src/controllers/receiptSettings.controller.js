@@ -11,10 +11,17 @@ const getSettings = async (req, res) => {
     try {
         const merchantId = req.user.merchant_id;
 
-        const [settings] = await promisePool.query(
-            'SELECT * FROM receipt_settings WHERE merchant_id = ?',
-            [merchantId]
-        );
+        const [[settings], [merchants], [payments]] = await Promise.all([
+            promisePool.query('SELECT * FROM receipt_settings WHERE merchant_id = ?', [merchantId]),
+            promisePool.query(
+                'SELECT business_name, address, phone, email, website, tax_id FROM merchants WHERE merchant_id = ?',
+                [merchantId]
+            ),
+            promisePool.query(
+                'SELECT mobile_qr_url FROM payment_settings WHERE merchant_id = ?',
+                [merchantId]
+            ),
+        ]);
 
         if (settings.length === 0) {
             await promisePool.query(
@@ -22,12 +29,11 @@ const getSettings = async (req, res) => {
                  VALUES (?, ?, '', NOW())`,
                 [merchantId, req.user.id]
             );
-
             const [newSettings] = await promisePool.query(
                 'SELECT * FROM receipt_settings WHERE merchant_id = ?',
                 [merchantId]
             );
-            return sendSuccess(res, formatSettings(newSettings[0]), 'Receipt settings retrieved successfully');
+            return sendSuccess(res, formatSettings(newSettings[0], merchants[0], payments[0]), 'Receipt settings retrieved successfully');
         }
 
         // Restore soft-deleted record if needed
@@ -39,7 +45,7 @@ const getSettings = async (req, res) => {
             settings[0].deleted_at = null;
         }
 
-        sendSuccess(res, formatSettings(settings[0]), 'Receipt settings retrieved successfully');
+        sendSuccess(res, formatSettings(settings[0], merchants[0], payments[0]), 'Receipt settings retrieved successfully');
 
     } catch (error) {
         log.error('Get receipt settings error:', error);
@@ -110,6 +116,22 @@ const updateSettings = async (req, res) => {
                 [merchantId]
             );
         }
+
+        // Sync business info back to merchants table
+        await promisePool.query(
+            `INSERT INTO merchants (merchant_id, merchant_name, merchant_name_la, created_by, created_date,
+                business_name, address, phone, email, website, tax_id)
+             VALUES (?, '', '', ?, NOW(), ?, ?, ?, ?, ?, ?)
+             ON DUPLICATE KEY UPDATE
+                business_name = VALUES(business_name),
+                address       = VALUES(address),
+                phone         = VALUES(phone),
+                email         = VALUES(email),
+                website       = VALUES(website),
+                tax_id        = VALUES(tax_id),
+                updated_at    = CURRENT_TIMESTAMP`,
+            [merchantId, String(merchantId), businessName || '', address || '', phone || '', email || '', website || '', taxId || '']
+        );
 
         await promisePool.query(
             `UPDATE receipt_settings SET
@@ -391,16 +413,19 @@ const deleteQRCode = async (req, res) => {
 };
 
 // Helper function to format settings
-const formatSettings = (dbRow) => {
+// merchant: row from merchants table (business info source of truth)
+// payment: row from payment_settings table (QR source of truth)
+const formatSettings = (dbRow, merchant = {}, payment = {}) => {
     return {
         id: dbRow.id,
-        businessName: dbRow.business_name,
-        address: dbRow.address,
-        city: dbRow.city,
-        phone: dbRow.phone,
-        email: dbRow.email,
-        website: dbRow.website,
-        taxId: dbRow.tax_id,
+        // Business info: merchants table is source of truth; fall back to receipt_settings
+        businessName: merchant.business_name || dbRow.business_name || '',
+        address:      merchant.address       || dbRow.address       || '',
+        city:         dbRow.city             || '',
+        phone:        merchant.phone         || dbRow.phone         || '',
+        email:        merchant.email         || dbRow.email         || '',
+        website:      merchant.website       || dbRow.website       || '',
+        taxId:        merchant.tax_id        || dbRow.tax_id        || '',
         logoUrl: dbRow.logo_url,
         showLogo: Boolean(dbRow.show_logo),
         logoSize: dbRow.logo_size,
@@ -427,7 +452,8 @@ const formatSettings = (dbRow) => {
         showTableNumber: Boolean(dbRow.show_table_number),
         showQRCode: Boolean(dbRow.show_qr_code),
         qrCodeData: dbRow.qr_code_data,
-        qrCodeUrl: dbRow.qr_code_url,
+        // QR code: payment_settings is source of truth; fall back to receipt_settings
+        qrCodeUrl: payment.mobile_qr_url || dbRow.qr_code_url || null,
         qrCodeWidth: dbRow.qr_code_width || 100,
         qrCodeHeight: dbRow.qr_code_height || 100,
         qrCodeMarginTop: dbRow.qr_code_margin_top || 12,
